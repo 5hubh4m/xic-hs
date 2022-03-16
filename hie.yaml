@@ -1,0 +1,10 @@
+cradle:
+  stack:
+    - path: "./src"
+      component: "xic-hs:lib"
+
+    - path: "./app/Main.hs"
+      component: "xic-hs:exe:xic"
+
+    - path: "./app/Paths_xic_hs.hs"
+      component: "xic-hs:exe:xic"
