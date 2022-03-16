@@ -9,9 +9,8 @@ import           Data.Void
 import           Text.Megaparsec
 import           Text.Megaparsec.Char
 import           Xi.AST
-import qualified Data.Text                      as T
-import qualified Text.Megaparsec.Char.Lexer     as L
-import           Text.Megaparsec.Debug
+import qualified Data.Text                       as T
+import qualified Text.Megaparsec.Char.Lexer      as L
 
 -- | the type of the parser
 type Parser = Parsec Void T.Text
