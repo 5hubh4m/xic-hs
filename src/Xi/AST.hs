@@ -85,7 +85,7 @@ data Statement = Assignment [Maybe Expression] Expression
 newtype Use = Use Ident
             deriving (Show, Eq)
 
-data GlobalVar = GlobalVar Ident PrimType (Maybe Expression)
+data GlobalVar = GlobalVar Ident PrimType (Maybe Literal)
                | GlobalArr Ident PrimType Int
                deriving (Show, Eq)
 

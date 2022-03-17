@@ -1,10 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Xi.Parse where
+module Xi.Parse (program) where
 
 import           Control.Monad.Combinators
 import           Control.Monad.Combinators.Expr
 import           Data.Char
+import           Data.Maybe
 import           Data.Void
 import           Text.Megaparsec
 import           Text.Megaparsec.Char
@@ -43,7 +44,6 @@ bool      = keyword "bool"
 use       = keyword "use"
 
 -- | reserved keywords
-reserved :: [Ident]
 reserved = Ident <$> ["if", "else", "return", "while", "true", "false", "int", "bool", "use"]
 
 -- | parse line comments
@@ -57,11 +57,8 @@ scn = L.space space1 lineComment blockComment
 lexeme = L.lexeme scn
 
 -- | parse an identifier
-ident_ :: Parser Ident
-ident_ = lexeme $ pack <$> identifier
-  where
-    identifier = (:) <$> letterChar <*> (many $ alphaNumChar <|> char '_')
-    pack       = Ident . T.pack
+identifier = (:) <$> letterChar <*> (many $ alphaNumChar <|> char '_')
+ident_ = lexeme $ (Ident . T.pack) <$> identifier
 
 -- | filter the reserved keywords
 notReserved id = if id `elem` reserved
@@ -72,23 +69,18 @@ notReserved id = if id `elem` reserved
 ident = notReserved =<< ident_
 
 -- | parse an integer
-integer :: Parser Int
-integer = lexeme L.decimal
+integer = L.signed scn $ lexeme L.decimal
 
 -- | parse a boolean
-boolean :: Parser Bool
 boolean = True <$ true <|> False <$ false
 
 -- | parse a char
-char_ :: Parser Int
 char_ = lexeme $ ord <$> quotes L.charLiteral
 
 -- | parse a string
-string_ :: Parser [Int]
 string_ = lexeme $ (ord <$>) <$> (char '"' *> manyTill L.charLiteral (char '"'))
 
 -- | parse a comma seperated list of literals
-array :: Parser [Literal]
 array = braces $ sepEndBy literal comma
 
 -- | parse a literal
@@ -100,18 +92,14 @@ literal = IntLiteral                        <$> integer
       <|> (ArrayLiteral . (IntLiteral <$>)) <$> string_
 
 -- | parse a primitive type
-primType :: Parser PrimType
 primType = lexeme $ (IntType <$ int) <|> (BoolType <$ bool)
 
 -- | parse a type
-type_ :: Parser Type
-type_ = lexeme $ fn <$> primType <*> (many $ brackets scn)
-  where
-    fn typ [] = Prim typ
-    fn typ xs = Array typ $ length xs
+getTyp typ [] = Prim typ
+getTyp typ xs = Array typ $ length xs
+type_ = lexeme $ getTyp <$> primType <*> (many $ brackets scn)
 
 -- | parse an argument to a function
-argument :: Parser Argument
 argument = Argument <$> ident
                     <*> (colon *> type_)
 
@@ -128,7 +116,6 @@ singleCall = (flip FunctionCall) <$> (parens $ sepEndBy expression comma)
 singleIndex = (flip Indexing) <$> brackets expression
 
 -- | the leaf term in an expression
-term :: Parser Expression
 term = parens expression
    <|> Literal  <$> literal
    <|> Variable <$> ident
@@ -172,7 +159,7 @@ lvalue = Nothing <$  symbol "_"
      <|> Just    <$> expression
 
 -- | parse an assignment
-assignment = Assignment <$> (sepBy lvalue comma)
+assignment = Assignment <$> (sepBy1 lvalue comma)
                         <*> (assign *> expression)
 
 -- | parse a block
@@ -182,14 +169,13 @@ block =  Block <$> (braces $ many statement)
 exprStmt = Expression <$> expression
 
 -- | parse an if statement
-ifStmt = If <$> (if_ *> parens expression)
+elseStmt = else_ *> statement
+ifStmt = If <$> (if_ *> expression)
             <*> statement
             <*> optional elseStmt
-  where
-    elseStmt = else_ *> statement
 
 -- | parse a while statement
-whileStmt = While <$> (while *> parens expression)
+whileStmt = While <$> (while *> expression)
                   <*> statement
 
 -- | parse a return statement
@@ -200,9 +186,9 @@ statements = ifStmt
          <|> whileStmt
          <|> retStmt
          <|> block
-         <|> try assignment
-         <|> try arrayDecl
          <|> try varDecl
+         <|> try arrayDecl
+         <|> try assignment
          <|> exprStmt
 
 -- | parse a statement optionally ened by a semi-colon
@@ -217,38 +203,28 @@ use_ = use *> (Use <$> ident) <* optional semicolon
 -- | parse a global variable declaration
 globalVarDecl = GlobalVar <$> ident
                           <*> (colon *> primType)
-                          <*> (optional $ assign *> expression)
+                          <*> (optional $ assign *> literal)
 
 -- | parse a global array declaration
-globalArrDecl = arr <$> ident
-                    <*> (colon *> primType)
-                    <*> (some $ brackets scn)
-  where
-    arr x y z = GlobalArr x y $ length z
+globalArr x y z = GlobalArr x y $ length z
+globalArrDecl = globalArr <$> ident
+                          <*> (colon *> primType)
+                          <*> (some $ brackets scn)
 
 -- | parse a global declaration
 globalDecl = (try globalArrDecl <|> globalVarDecl) <* optional semicolon
 
 -- | parse a function declaration
-function = Function <$> ident
-                    <*> (parens $ sepBy argument comma)
-                    <*> (colon *> sepBy type_ comma)
-                    <*> statement
-
--- | parse a procedure declaration
-procedure = prod <$> ident
-                 <*> (parens $ sepBy argument comma)
-                 <*> statement
-  where
-    prod x y z = Function x y [] z
-
--- | parse a global function
-functionDecl = try function <|> procedure
+function x y = Function x y . fromMaybe []
+functionDecl = function <$> ident
+                        <*> (parens $ sepBy argument comma)
+                        <*> (optional $ colon *> sepBy1 type_ comma)
+                        <*> statement
 
 -- | parse a global declaration
 global =      Using      <$> use_
-     <|> try (FuncDecl   <$> functionDecl)
-     <|>      GlobalDecl <$> globalDecl
+     <|> try (GlobalDecl <$> globalDecl)
+     <|>      FuncDecl   <$> functionDecl
 
 -- | parse the program
-program = (Program <$> many global) <* eof
+program = scn *> (Program <$> many global) <* eof
