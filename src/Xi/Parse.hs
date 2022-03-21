@@ -57,8 +57,8 @@ scn = L.space space1 lineComment blockComment
 lexeme = L.lexeme scn
 
 -- | parse an identifier
-identifier = (:) <$> letterChar <*> (many $ alphaNumChar <|> char '_')
-ident_ = lexeme $ (Ident . T.pack) <$> identifier
+identifier = (:) <$> letterChar <*> many (alphaNumChar <|> char '_')
+ident_ = lexeme $ Ident . T.pack <$> identifier
 
 -- | filter the reserved keywords
 notReserved id = if id `elem` reserved
@@ -85,11 +85,11 @@ array = braces $ sepEndBy literal comma
 
 -- | parse a literal
 literal :: Parser Literal
-literal = IntLiteral                        <$> integer
-      <|> IntLiteral                        <$> char_
-      <|> BoolLiteral                       <$> boolean
-      <|> ArrayLiteral                      <$> array
-      <|> (ArrayLiteral . (IntLiteral <$>)) <$> string_
+literal = IntLiteral                      <$> integer
+      <|> IntLiteral                      <$> char_
+      <|> BoolLiteral                     <$> boolean
+      <|> ArrayLiteral                    <$> array
+      <|> ArrayLiteral . (IntLiteral <$>) <$> string_
 
 -- | parse a primitive type
 primType = lexeme $ (IntType <$ int) <|> (BoolType <$ bool)
@@ -97,7 +97,7 @@ primType = lexeme $ (IntType <$ int) <|> (BoolType <$ bool)
 -- | parse a type
 getTyp typ [] = Prim typ
 getTyp typ xs = Array typ $ length xs
-type_ = lexeme $ getTyp <$> primType <*> (many $ brackets scn)
+type_ = lexeme $ getTyp <$> primType <*> many (brackets scn)
 
 -- | parse an argument to a function
 argument = Argument <$> ident
@@ -110,34 +110,35 @@ argument = Argument <$> ident
 indexOrCallExpr = foldr1 (flip (.)) <$> some (singleIndex <|> singleCall)
 
 -- | parse a single call expression
-singleCall = (flip FunctionCall) <$> (parens $ sepEndBy expression comma)
+singleCall = flip FunctionCall <$> parens (sepEndBy expression comma)
 
 -- | parse a single indexing
-singleIndex = (flip Indexing) <$> brackets expression
+singleIndex = flip Indexing <$> brackets expression
 
 -- | the leaf term in an expression
 term = parens expression
-   <|> Literal  <$> literal
-   <|> Variable <$> ident
+   <|> try (Literal   <$> literal)
+   <|>      ArrayExpr <$> braces (sepEndBy expression comma)
+   <|>      Variable  <$> ident
 
 -- | operator table
-table = [ [ Postfix $ indexOrCallExpr                                 ]
-        , [ Prefix  $ (UnOp  (IntUnOp       Neg    )) <$ symbol "-"
-          , Prefix  $ (UnOp  (BoolUnOp      Not    )) <$ symbol "!"   ]
-        , [ InfixL  $ (BinOp (IntBinOp      HighMul)) <$ symbol "*>>"
-          , InfixL  $ (BinOp (IntBinOp      Div    )) <$ symbol "/"
-          , InfixL  $ (BinOp (IntBinOp      Mod    )) <$ symbol "%"
-          , InfixL  $ (BinOp (IntBinOp      Mul    )) <$ symbol "*"   ]
-        , [ InfixL  $ (BinOp (IntBinOp      Add    )) <$ symbol "+"
-          , InfixL  $ (BinOp (IntBinOp      Sub    )) <$ symbol "-"   ]
-        , [ InfixL  $ (BinOp (ComparisionOp Leq    )) <$ symbol "<="
-          , InfixL  $ (BinOp (ComparisionOp Geq    )) <$ symbol ">="
-          , InfixL  $ (BinOp (ComparisionOp Lt     )) <$ symbol "<"
-          , InfixL  $ (BinOp (ComparisionOp Gt     )) <$ symbol ">"   ]
-        , [ InfixL  $ (BinOp (ComparisionOp Eq     )) <$ symbol "=="
-          , InfixL  $ (BinOp (ComparisionOp Neq    )) <$ symbol "!="  ]
-        , [ InfixL  $ (BinOp (BoolBinOp     And    )) <$ symbol "&"   ]
-        , [ InfixL  $ (BinOp (BoolBinOp     Or     )) <$ symbol "|"   ]
+table = [ [ Postfix   indexOrCallExpr                               ]
+        , [ Prefix  $ UnOp  (IntUnOp       Neg    ) <$ symbol "-"
+          , Prefix  $ UnOp  (BoolUnOp      Not    ) <$ symbol "!"   ]
+        , [ InfixL  $ BinOp (IntBinOp      HighMul) <$ symbol "*>>"
+          , InfixL  $ BinOp (IntBinOp      Div    ) <$ symbol "/"
+          , InfixL  $ BinOp (IntBinOp      Mod    ) <$ symbol "%"
+          , InfixL  $ BinOp (IntBinOp      Mul    ) <$ symbol "*"   ]
+        , [ InfixL  $ BinOp (IntBinOp      Add    ) <$ symbol "+"
+          , InfixL  $ BinOp (IntBinOp      Sub    ) <$ symbol "-"   ]
+        , [ InfixL  $ BinOp (ComparisionOp Leq    ) <$ symbol "<="
+          , InfixL  $ BinOp (ComparisionOp Geq    ) <$ symbol ">="
+          , InfixL  $ BinOp (ComparisionOp Lt     ) <$ symbol "<"
+          , InfixL  $ BinOp (ComparisionOp Gt     ) <$ symbol ">"   ]
+        , [ InfixL  $ BinOp (ComparisionOp Eq     ) <$ symbol "=="
+          , InfixL  $ BinOp (ComparisionOp Neq    ) <$ symbol "!="  ]
+        , [ InfixL  $ BinOp (BoolBinOp     And    ) <$ symbol "&"   ]
+        , [ InfixL  $ BinOp (BoolBinOp     Or     ) <$ symbol "|"   ]
         ]
 
 -- | parse an expression
@@ -146,24 +147,24 @@ expression = makeExprParser term table
 -- | this section is for parsing statements
 
 -- | parse a variable declaration
-varDecl = VarDecl <$> (sepBy1 argument comma)
-                  <*> (optional $ assign *> expression)
+varDecl = VarDecl <$> sepBy1 argument comma
+                  <*> optional (assign *> expression)
 
 -- | parse an array declaration
 arrayDecl = ArrayDecl <$> ident
                       <*> (colon *> primType)
-                      <*> (some $ brackets $ optional expression)
+                      <*> some (brackets $ optional expression)
 
 -- | parse a single lvalue
 lvalue = Nothing <$  symbol "_"
      <|> Just    <$> expression
 
 -- | parse an assignment
-assignment = Assignment <$> (sepBy1 lvalue comma)
+assignment = Assignment <$> sepBy1 lvalue comma
                         <*> (assign *> expression)
 
 -- | parse a block
-block =  Block <$> (braces $ many statement)
+block =  Block <$> braces (many statement)
 
 -- | parse a procedure call
 exprStmt = Expression <$> expression
@@ -203,13 +204,13 @@ use_ = use *> (Use <$> ident) <* optional semicolon
 -- | parse a global variable declaration
 globalVarDecl = GlobalVar <$> ident
                           <*> (colon *> primType)
-                          <*> (optional $ assign *> literal)
+                          <*> optional (assign *> literal)
 
 -- | parse a global array declaration
 globalArr x y z = GlobalArr x y $ length z
 globalArrDecl = globalArr <$> ident
                           <*> (colon *> primType)
-                          <*> (some $ brackets scn)
+                          <*> some (brackets scn)
 
 -- | parse a global declaration
 globalDecl = (try globalArrDecl <|> globalVarDecl) <* optional semicolon
@@ -217,8 +218,8 @@ globalDecl = (try globalArrDecl <|> globalVarDecl) <* optional semicolon
 -- | parse a function declaration
 function x y = Function x y . fromMaybe []
 functionDecl = function <$> ident
-                        <*> (parens $ sepBy argument comma)
-                        <*> (optional $ colon *> sepBy1 type_ comma)
+                        <*> parens (sepBy argument comma)
+                        <*> optional (colon *> sepBy1 type_ comma)
                         <*> statement
 
 -- | parse a global declaration
